@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <curses.h>
 #include <functional>
+#include <set>
 
 namespace {
 
@@ -171,6 +172,59 @@ int healthColor(const EntityStats& stats) {
     return stats.hp * 100 / std::max(1, stats.maxHp) <= 35 ? kPairHealthLow : kPairHealthGood;
 }
 
+struct LegendEntry {
+    char glyph;
+    std::string label;
+    int colorPair;
+};
+
+int legendPriority(const LegendEntry& entry) {
+    switch (entry.glyph) {
+        case '@':
+            return 0;
+        case '>':
+            return 1;
+        case 'B':
+        case 'g':
+        case 's':
+        case 'o':
+            return 2;
+        case '!':
+            return 3;
+        case ')':
+        case ']':
+            return 4;
+        default:
+            return 5;
+    }
+}
+
+std::string labelForEnemy(const Enemy& enemy) {
+    switch (enemy.kind) {
+        case EnemyKind::Goblin:
+            return "Goblin";
+        case EnemyKind::Skeleton:
+            return "Skeleton";
+        case EnemyKind::Orc:
+            return "Orc";
+        case EnemyKind::DreadLord:
+            return "Boss";
+    }
+    return "Enemy";
+}
+
+std::string labelForItem(const Item& item) {
+    switch (item.type) {
+        case ItemType::Potion:
+            return "Potion";
+        case ItemType::Blade:
+            return "Blade";
+        case ItemType::Shield:
+            return "Shield";
+    }
+    return "Item";
+}
+
 }  // namespace
 
 void Renderer::initialize() {
@@ -219,7 +273,7 @@ void Renderer::drawMap(const DungeonFloor& floor, const Player& player, const st
         mvaddch(player.pos.y + 1, player.pos.x + 1, '@');
     });
 
-    drawBoxedSection(0, 62, 10, 18, "Status");
+    drawBoxedSection(0, 62, 8, 18, "Status");
     withColor(g_hasColors ? kPairDefault : 0, A_BOLD, [&]() {
         mvprintw(1, 64, "Floor: %d", player.floor);
     });
@@ -237,16 +291,40 @@ void Renderer::drawMap(const DungeonFloor& floor, const Player& player, const st
         }
         mvprintw(5, 64, "Potions: %d", potions);
     });
-    mvprintw(6, 64, "Inv: %zu", player.inventory.size());
-    withColor(g_hasColors ? kPairPanel : 0, A_BOLD, [&]() {
-        mvprintw(7, 64, "Goal:");
+    withColor(player.floor < 4 ? (g_hasColors ? kPairExit : 0) : (g_hasColors ? kPairBoss : 0), 0, [&]() {
+        mvprintw(6, 64, player.floor < 4 ? "Goal: Exit" : "Goal: Boss");
     });
-    withColor(player.floor < 4 ? (g_hasColors ? kPairExit : 0) : (g_hasColors ? kPairBoss : 0), A_BOLD, [&]() {
-        mvprintw(8, 64, player.floor < 4 ? "Find the exit" : "Defeat boss");
+    
+    drawBoxedSection(8, 62, 7, 18, "Legend");
+    std::vector<LegendEntry> legendEntries = {
+        {'@', "You", g_hasColors ? kPairPlayer : 0},
+        {'>', "Exit", g_hasColors ? kPairExit : 0},
+    };
+    std::set<char> seenGlyphs = {'@', '>'};
+
+    for (const auto& enemy : floor.enemies) {
+        if (seenGlyphs.insert(enemy.glyph).second) {
+            legendEntries.push_back({enemy.glyph, labelForEnemy(enemy), colorForEnemy(enemy)});
+        }
+    }
+    for (const auto& item : floor.items) {
+        if (seenGlyphs.insert(item.glyph).second) {
+            legendEntries.push_back({item.glyph, labelForItem(item), colorForItem(item)});
+        }
+    }
+    std::stable_sort(legendEntries.begin(), legendEntries.end(), [](const LegendEntry& left, const LegendEntry& right) {
+        return legendPriority(left) < legendPriority(right);
     });
 
-    drawBoxedSection(10, 62, 12, 18, "Log");
-    const int logLines = 9;
+    for (int i = 0; i < static_cast<int>(legendEntries.size()) && i < 5; ++i) {
+        const auto& entry = legendEntries[i];
+        withColor(entry.colorPair, A_BOLD, [&]() {
+            mvprintw(9 + i, 64, "%c %-10s", entry.glyph, entry.label.c_str());
+        });
+    }
+
+    drawBoxedSection(15, 62, 7, 18, "Log");
+    const int logLines = 4;
     const int start = std::max(0, static_cast<int>(messages.size()) - logLines);
     for (int i = 0; i < logLines && start + i < static_cast<int>(messages.size()); ++i) {
         const std::string& line = messages[start + i];
@@ -263,7 +341,7 @@ void Renderer::drawMap(const DungeonFloor& floor, const Player& player, const st
             }
         }
         withColor(color, 0, [&]() {
-            printClamped(11 + i, 64, 14, line);
+            printClamped(16 + i, 64, 14, line);
         });
     }
 
